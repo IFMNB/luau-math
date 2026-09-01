@@ -1,0 +1,15 @@
+{
+	"name": "ifmnb/bitmap",
+	"version": "2609.1.3",
+	"main": "init.luau",
+	"repository": "github:IFMNB/luau-math",
+	"license": "GNU General Public License v3.0",
+	"files": [
+		"./",
+		"!*.toml",
+		"!*.json"
+	],
+	"publishConfig": {
+		"access": "public"
+	}
+}
