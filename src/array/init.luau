@@ -27,8 +27,8 @@ export type Library = {
 
 	read put: <T>(of: Array<T>, value: T, inverse: boolean?) -> number,
 	read pick: <T>(of: Array<T>, inverse: boolean?) -> T?,
-	read next: <T>(of: Array<T>, pos: number?) -> (number?, T),
-    read iter: <T>(of: Array<T>, previous: number?) -> () -> (number?, T),
+	read next: <T>(of: Array<T>, pos: number?, inverted: boolean?) -> (number?, T),
+    read iter: <T>(of: Array<T>, previous: number?, inverted: boolean?) -> () -> (number?, T),
 
 	read type: <T>(of: Array<T>) -> supported_types,
 	read max: <T>(of: Array<T>) -> number,
@@ -36,7 +36,7 @@ export type Library = {
 	read size: <T>(of: Array<T>, slot: boolean?) -> number,
 	read set: <T>(of: Array<T>, setting: array_settings, to: boolean) -> (),
     read get: <T>(of: Array<T>, setting: array_settings) -> boolean,
-    read header: <T>(of: Array<T>) -> number,
+    read dsize: <T>(of: Array<T>) -> number,
 }
 
 --[=[   schematic
@@ -79,6 +79,8 @@ export type Library = {
     
 ]=]
 
+const DEBUG = game and game.GetService and game:GetService("RunService") and game:GetService("RunService"):IsStudio() or false
+
 const STATIC_SIZE_SLOT_VECTOR: Byte = 12 -- f32 (1/3)
 const STATIC_SIZE_SLOT_NORMAL: Byte = 4 -- u32 (rad f32 }{ f32)
 const STATIC_SIZE_SLOT_BOOLEAN: Byte = 1 -- bitmap storage unit (1 bit per element)
@@ -93,6 +95,7 @@ const WRITE_VECTOR = buffer.writef32
 const WRITE_NORMAL = buffer.writeu32
 const WRITE_CHAR = buffer.writeu8
 const WRITE_SHORT = buffer.writeu16
+const WRITE_UINTEGER = buffer.writeu32
 
 const READ_INTEGER = buffer.readi32
 const READ_FLOAT = buffer.readf32
@@ -101,6 +104,21 @@ const READ_VECTOR = buffer.readf32
 const READ_NORMAL = buffer.readu32
 const READ_CHAR = buffer.readu8
 const READ_SHORT = buffer.readu16
+const READ_UINTEGER = buffer.readu32
+
+const B32_BAND = bit32.band
+const B32_RSHIFT = bit32.rshift
+
+const M_ROUND = math.round
+const M_CEIL = math.ceil
+const M_ABSOLUTE = math.abs
+const M_SQRT = math.sqrt
+
+const BM_GET = bitmap.get
+const BM_SET = bitmap.set
+const BM_CLEAR = bitmap.clear
+const BM_FIND = bitmap.find
+const BM_FIND_FREE = bitmap.find_free
 
 const ARRAY_SETTINGS: Index = 0
 const SETTINGS_FREEZE: Index = 0
@@ -110,13 +128,14 @@ const SETTINGS_SPOOF: Index = 2
 const ARRAY_TYPE: Index = 1
 const ARRAY_MAX: Index = 5
 const ARRAY_COUNT: Index = 9
-const ARRAY_BITMAP: Index = 13
+const ARRAY_OFFSET: Index = 13
+const ARRAY_BITMAP: Index = 17
 const ARRAY_STATIC_PART_ENDS_AT: Index = ARRAY_BITMAP
 
 const LIBRARY_INDEX_STARTS_AT = 1
 const LIBRARY_DEFAULT_MAX = LIBRARY_INDEX_STARTS_AT + 1
 const LIBRARY_OFFSET_AFTER_HEADER: Index = 0
-const LIBRARY_OFFSET_BITMAP = ARRAY_BITMAP
+const LIBRARY_OFFSET_BITMAP = 0
 
 const TYPE_VECTOR: Type = 0
 const TYPE_INTEGER: Type = 1
@@ -168,33 +187,33 @@ const MAP = table.freeze({
 } :: { [string | number]: number })
 
 local self: Library
-const library: Library = {
+const library: Library = table.freeze {
 
 	create = function<T>(of: supported_types, max: number?): Array<T>
 		max = max or LIBRARY_DEFAULT_MAX
-        assert(LIBRARY_INDEX_STARTS_AT < max, `count of maximum elements {max} cannot be used, because array size < {LIBRARY_INDEX_STARTS_AT}`)
 
-		const array_type = assert(MAP[of], `cannot create array of {of}, because type is unsupported currently`)
-		const array_bitmap_size = math.ceil(max / 8)
-
+		const array_type = MAP[of]
+		const array_bitmap_size = M_CEIL(max / 8)
         local new: Array<T>
 
-        if of == "boolean" then
+        if of == STYPE_BOOLEAN then
             new = buffer.create(
                 ARRAY_STATIC_PART_ENDS_AT +
-                LIBRARY_OFFSET_AFTER_HEADER + 
+                LIBRARY_OFFSET_AFTER_HEADER +
+                LIBRARY_OFFSET_BITMAP + 
                 array_bitmap_size            
             )
         else
             new = buffer.create(
                 ARRAY_STATIC_PART_ENDS_AT +
                 LIBRARY_OFFSET_AFTER_HEADER + 
+                LIBRARY_OFFSET_BITMAP + 
                 array_bitmap_size + 
                 MAP[array_type] * max
             )
         end
 
-
+        WRITE_UINTEGER(new, ARRAY_OFFSET, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP + array_bitmap_size + LIBRARY_OFFSET_AFTER_HEADER + LIBRARY_OFFSET_BITMAP)
 		WRITE_INTEGER(new, ARRAY_MAX, max)
 	    WRITE_INTEGER(new, ARRAY_COUNT, 0)
 		WRITE_CHAR(new, ARRAY_TYPE, array_type)
@@ -204,16 +223,16 @@ const library: Library = {
 
 	read = function<T>(of: Array<T>, pos: number?): T?
         pos = pos or LIBRARY_INDEX_STARTS_AT
-        assert(pos >= LIBRARY_INDEX_STARTS_AT, `position {pos} wasn't in the scope of {LIBRARY_INDEX_STARTS_AT}`)
-        assert(pos <= self.max(of), `position {pos} quited of bounds`)
 
-        const index: Index = pos - LIBRARY_INDEX_STARTS_AT
-        const T: supported_types = self.type(of)
+        const index = pos - LIBRARY_INDEX_STARTS_AT
+        const T = READ_CHAR(of, ARRAY_TYPE)
+        const bit_get = BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
 
-        if T == "boolean" then return bitmap.get(of, index, ARRAY_BITMAP) end
-        if not bitmap.get(of, index, ARRAY_BITMAP) then
-            if self.get(of, "spoof") then
-                const bit_index = bitmap.find(of, 0, self.max(of) - LIBRARY_INDEX_STARTS_AT, ARRAY_BITMAP)
+        if T == TYPE_BOOLEAN then
+            return bit_get
+        elseif not bit_get then
+            if BM_GET(of, SETTINGS_SPOOF, ARRAY_SETTINGS) then
+                const bit_index = BM_FIND(of, 0, READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
 
                 if bit_index then
                     return self.read(of, bit_index + LIBRARY_INDEX_STARTS_AT)
@@ -223,42 +242,33 @@ const library: Library = {
             end
         end
 
-        const label = index * MAP[MAP[T]]
-        const offset = ARRAY_BITMAP + self.header(of)
+        const label = index * MAP[T]
+        const offset = READ_UINTEGER(of, ARRAY_OFFSET)
         const sector = offset + label
 
-        if T == "float" then return READ_FLOAT(of, sector) end
-        if T == "integer" then return READ_INTEGER(of, sector) end
-        if T == "short" then return READ_SHORT(of, sector) end
-        if T == "number" then return READ_DOUBLE(of, sector) end
-
-        if T == "normal" then 
+        if T == TYPE_FLOAT then return READ_FLOAT(of, sector)
+        elseif T == TYPE_INTEGER then return READ_INTEGER(of, sector)
+        elseif T == TYPE_SHORT then return READ_SHORT(of, sector)
+        elseif T == TYPE_DOUBLE then return READ_DOUBLE(of, sector)
+        elseif T == TYPE_NORMAL then 
             const p = READ_NORMAL(of, sector)
-            const u = bit32.band(p, 0xFFFF)
-            const v = bit32.rshift(p, 16)
+            const u = B32_BAND(p, 0xFFFF)
+            const v = B32_RSHIFT(p, 16)
 
             local x = u / 65535 * 2 - 1
             local y = v / 65535 * 2 - 1
-            local z = 1 - math.abs(x) - math.abs(y)
+            local z = 1 - M_ABSOLUTE(x) - M_ABSOLUTE(y)
 
             if z < 0 then
                 const old_x = x
                 const old_y = y
 
-                x = (1 - math.abs(old_y)) * (old_x >= 0 and 1 or -1)
-                y = (1 - math.abs(old_x)) * (old_y >= 0 and 1 or -1)
+                x = (1 - M_ABSOLUTE(old_y)) * (old_x >= 0 and 1 or -1)
+                y = (1 - M_ABSOLUTE(old_x)) * (old_y >= 0 and 1 or -1)
             end
 
-            const length = math.sqrt(x*x + y*y + z*z)
-
-            x /= length
-            y /= length
-            z /= length
-
             return vector.create(x, y, z)
-        end
-
-        if T == "vector" then
+        elseif T == TYPE_VECTOR then
             const slot_size = STATIC_SIZE_SLOT_VECTOR / 3
 
             return vector.create(
@@ -268,71 +278,71 @@ const library: Library = {
             )
         end
 
-        error(`cannot read value from this array, {T} is damaged or something unsupported right now`, 0)
+        return nil
     end,
 
 	write = function<T>(of: Array<T>, pos: number?, value: supported?): ()
         pos = pos or LIBRARY_INDEX_STARTS_AT
-        assert(pos >= LIBRARY_INDEX_STARTS_AT, `position {pos} wasn't in the scope of {LIBRARY_INDEX_STARTS_AT}`)
-        assert(pos <= self.max(of), `position {pos} quited of bounds`)
-        assert(not self.get(of, "freeze"), "cannot write to frozen array")
 
         const index = pos - LIBRARY_INDEX_STARTS_AT
-        const T = self.type(of)
+        const T = READ_CHAR(of, ARRAY_TYPE)
         
         if value == nil then
-            if bitmap.get(of, index, ARRAY_BITMAP) then
-                WRITE_INTEGER(of, ARRAY_COUNT, self.count(of) - 1)
+            if BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP) then
+                WRITE_INTEGER(of, ARRAY_COUNT, READ_INTEGER(of, ARRAY_COUNT) - 1)
             end
 
-            bitmap.clear(of, index, ARRAY_BITMAP)
+            BM_CLEAR(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
         else
-            if not bitmap.get(of, index, ARRAY_BITMAP) then
-                WRITE_INTEGER(of, ARRAY_COUNT, self.count(of) + 1)
+            if not BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP) then
+                WRITE_INTEGER(of, ARRAY_COUNT, READ_INTEGER(of, ARRAY_COUNT) + 1)
             end
 
-            bitmap.set(of, index, ARRAY_BITMAP)
+            BM_SET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
         end
 
-        if T == 'boolean' then return end
+        if T == TYPE_BOOLEAN then return end
 
-        const label = index * MAP[MAP[T]]
-        const offset = ARRAY_BITMAP + self.header(of)
+        const label = index * MAP[T]
+        const offset = READ_UINTEGER(of, ARRAY_OFFSET)
         const sector = offset + label
 
-        if T == "float" then WRITE_FLOAT(of, sector, value :: number or 0); return end
-        if T == "integer" then WRITE_INTEGER(of, sector, value :: number or 0); return end
-        if T == "number" then WRITE_DOUBLE(of, sector, value :: number or 0); return end
-        if T == "short" then WRITE_SHORT(of, sector, value :: number or 0); return end
+        if T == TYPE_FLOAT then WRITE_FLOAT(of, sector, value :: number or 0); return
+        elseif T == TYPE_INTEGER then WRITE_INTEGER(of, sector, value :: number or 0); return
+        elseif T == TYPE_DOUBLE then WRITE_DOUBLE(of, sector, value :: number or 0); return
+        elseif T == TYPE_SHORT then WRITE_SHORT(of, sector, value :: number or 0); return
 
-        if T == "normal" then 
+        elseif T == TYPE_NORMAL then 
             const var = (value or vector.zero) :: vector
-            const length = math.sqrt(var.x * var.x + var.y * var.y + var.z * var.z)
+            const length = M_SQRT(var.x * var.x + var.y * var.y + var.z * var.z)
+
+            if length == 0 then 
+                WRITE_NORMAL(of, sector, 0)
+                return 
+            end
 
             local x = var.x / length
             local y = var.y / length
             local z = var.z / length
 
-            const inv_l = 1 / (math.abs(x) + math.abs(y) + math.abs(z))
+            const inv_l = 1 / (M_ABSOLUTE(x) + M_ABSOLUTE(y) + M_ABSOLUTE(z))
             x *= inv_l
             y *= inv_l
             z *= inv_l
 
             if z < 0 then
                 const old = x
-                x = (1 - math.abs(y)) * (old >= 0 and 1 or -1)
-                y = (1 - math.abs(old)) * (y >= 0 and 1 or -1)
+                x = (1 - M_ABSOLUTE(y)) * (old >= 0 and 1 or -1)
+                y = (1 - M_ABSOLUTE(old)) * (y >= 0 and 1 or -1)
             end
 
-            const u = math.round((x * 0.5 + 0.5) * 65535)
-            const v = math.round((y * 0.5 + 0.5) * 65535)
+            const u = M_ROUND((x * 0.5 + 0.5) * 65535)
+            const v = M_ROUND((y * 0.5 + 0.5) * 65535)
             const p = bit32.bor(u,bit32.lshift(v, 16))
 
             WRITE_NORMAL(of, sector, p)
             return
-        end
-
-        if T == "vector" then
+        elseif T == TYPE_VECTOR then
             const slot_size = STATIC_SIZE_SLOT_VECTOR / 3
             const var = (value or vector.zero) :: vector
 
@@ -343,33 +353,74 @@ const library: Library = {
             return;
         end
 
-        assert(type(value) == T, `received value {tostring(value)} isn't a part of expected type`)
-        error(`cannot write value to this array, {T} is damaged or something unsupported right now`, 0)
+        return
 	end,
 
 	pick = function<T>(of: Array<T>, inverse: boolean?): T?
-		const index = bitmap.find(of, 0, self.max(of) - 1, LIBRARY_OFFSET_BITMAP, inverse)
-		return index and self.read(of, index + 1) or nil
+		const index = BM_FIND(of, 0, READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP, inverse)
+		return index and self.read(of, index + LIBRARY_INDEX_STARTS_AT) or nil
 	end,
 
 	put = function<T>(of: Array<T>, value: T, inverse: boolean?): number
-		const index = assert (bitmap.find_free(of, 0, self.max(of) - 1, LIBRARY_OFFSET_BITMAP, inverse), "array is full")
+		const index = assert (BM_FIND_FREE(of, 0, READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP, inverse), "array is full")
 		const position = index + LIBRARY_INDEX_STARTS_AT
         self.write(of, position, value)
         return position
 	end,
 
-	next = function<T>(of: Array<T>, previous: number?): (number?, T)
-		const index = bitmap.find(of, previous or 0, self.max(of) - 1, LIBRARY_OFFSET_BITMAP)
-		if not index then return nil, nil end
+	next = function<T>(of: Array<T>, previous: number?, inverted: boolean?): (number?, T)
+        const max = READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT
+
+        local from: number
+        local to: number
+
+        if previous == nil then
+            from = 0
+            to = max
+        else
+            const previous_index = previous - LIBRARY_INDEX_STARTS_AT
+
+            if inverted then
+                from = 0
+                to = previous_index - 1
+            else
+                from = previous_index + 1
+                to = max
+            end
+        end
+
+        if from < 0 or from > max or to < 0 or to > max or from > to then
+            return nil, nil
+        end
+
+        const index = BM_FIND(
+            of,
+            from,
+            to,
+            ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP,
+            inverted
+        )
+
+        if not index then
+            return nil, nil
+        end
 
         const position = index + LIBRARY_INDEX_STARTS_AT
-		return position, self.read(of, position)
+        return position, self.read(of, position)
 	end,
 
-    iter = function<T>(of: Array<T>, previous: number?): () -> (number?, T)
+    iter = function<T>(of: Array<T>, previous: number?, inverted: boolean?): () -> (number?, T)
+        local post = previous
+
         return function()
-            return self.next(of, previous)
+            const position, value = self.next(of, post, inverted)
+
+            if position == nil then
+                return nil, nil
+            end
+
+            post = position
+            return position, value
         end
     end,
 
@@ -379,10 +430,10 @@ const library: Library = {
 
     max = function<T>(of: Array<T>): number return READ_INTEGER(of, ARRAY_MAX) end,
 	count = function<T>(of: Array<T>): number return READ_INTEGER(of, ARRAY_COUNT) end,
-	size = function<T>(of: Array<T>, slot: boolean?): number return slot and MAP[self.type(of)] or buffer.len(of) end,
-	set = function<T>(of: Array<T>, setting: array_settings, to: boolean): () assert(not self.get(of, "freeze"), "cannot modify frozen array"); if to then bitmap.set(of, assert(MAP[setting], `unknown {setting}`), ARRAY_SETTINGS) else bitmap.clear(of, assert(MAP[setting], `unknown {setting}`), ARRAY_SETTINGS) end end,
-    get = function<T>(of: Array<T>, setting: array_settings): boolean return bitmap.get(of, assert(MAP[setting], `unknown setting {setting}`), ARRAY_SETTINGS) end,
-    header = function<T>(of: Array<T>): number return math.ceil(self.max(of) / 8) end
+	size = function<T>(of: Array<T>, slot: boolean?): number return slot and MAP[MAP[READ_CHAR(of, ARRAY_TYPE)]] or buffer.len(of) end,
+	set = function<T>(of: Array<T>, setting: array_settings, to: boolean): () assert(not self.get(of, "freeze"), "cannot modify frozen array"); if to then BM_SET(of, assert(MAP[setting], `unknown {setting}`), ARRAY_SETTINGS) else BM_CLEAR(of, assert(MAP[setting], `unknown {setting}`), ARRAY_SETTINGS) end end,
+    get = function<T>(of: Array<T>, setting: array_settings): boolean return BM_GET(of, assert(MAP[setting], `unknown setting {setting}`), ARRAY_SETTINGS) end,
+    dsize = function<T>(of: Array<T>): number return M_CEIL(READ_INTEGER(of, ARRAY_MAX) / 8) + LIBRARY_OFFSET_AFTER_HEADER + LIBRARY_OFFSET_BITMAP end
 }
 
 self = library
