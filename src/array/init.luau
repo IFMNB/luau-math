@@ -4,6 +4,8 @@
 const bitmap = require("./bitmap")
 
 -- TODO
+-- string fixed size slots
+-- buffer fixed size slots
 
 export type supported = number | nil | boolean | string | vector | Array
 export type supported_types = "integer" | "boolean" | "vector" | "float" | "number" | "normal" | "short"
@@ -26,6 +28,7 @@ export type Library = {
 	read put: <T>(of: Array<T>, value: T, inverse: boolean?) -> number,
 	read pick: <T>(of: Array<T>, inverse: boolean?) -> T?,
 	read next: <T>(of: Array<T>, pos: number?) -> (number?, T),
+    read iter: <T>(of: Array<T>, previous: number?) -> () -> (number?, T),
 
 	read type: <T>(of: Array<T>) -> supported_types,
 	read max: <T>(of: Array<T>) -> number,
@@ -360,9 +363,15 @@ const library: Library = {
 		const index = bitmap.find(of, previous or 0, self.max(of) - 1, LIBRARY_OFFSET_BITMAP)
 		if not index then return nil, nil end
 
-		const position = index + 1
+        const position = index + LIBRARY_INDEX_STARTS_AT
 		return position, self.read(of, position)
 	end,
+
+    iter = function<T>(of: Array<T>, previous: number?): () -> (number?, T)
+        return function()
+            return self.next(of, previous)
+        end
+    end,
 
 	type = function<T>(of: Array<T>): supported_types
         return assert(MAP[tostring(READ_CHAR(of, ARRAY_TYPE))], "cannot read type, array damaged") :: any
