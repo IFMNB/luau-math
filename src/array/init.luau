@@ -124,6 +124,7 @@ const ARRAY_SETTINGS: Index = 0
 const SETTINGS_FREEZE: Index = 0
 const SETTINGS_NULLIFE: Index = 1
 const SETTINGS_SPOOF: Index = 2
+const SETTINGS_CHANGED: Index = 3
 
 const ARRAY_TYPE: Index = 1
 const ARRAY_MAX: Index = 5
@@ -155,7 +156,7 @@ const STYPE_NORMAL: "normal" = "normal"
 const STYPE_BOOLEAN: "boolean" = "boolean"
 const STYPE_SHORT: "short" = "short"
 
-const MAP = table.freeze({
+const MAP = table.freeze {
 	[STYPE_VECTOR] = TYPE_VECTOR,
 	[STYPE_STRING] = TYPE_STRING,
 	[STYPE_NUMBER] = TYPE_DOUBLE,
@@ -183,17 +184,37 @@ const MAP = table.freeze({
 
     nullify = SETTINGS_NULLIFE,
     freeze = SETTINGS_FREEZE,
-    spoof = SETTINGS_SPOOF
-} :: { [string | number]: number })
+    spoof = SETTINGS_SPOOF,
+    changed = SETTINGS_CHANGED
+} :: { [string | number]: number }
+
+const POPCOUNT_16: {Byte} = table.create(65536, 0)
+
+do
+    for i = 1, 65536 do
+        local count = 0
+        local n = i - 1
+        
+        while n > 0 do
+            count += bit32.band(n, 1)
+            n = bit32.rshift(n, 1)
+        end
+        
+        POPCOUNT_16[i] = count
+    end
+
+    table.freeze(POPCOUNT_16)
+end
 
 local self: Library
-const library: Library = table.freeze {
+const library: Library = {
 
 	create = function<T>(of: supported_types, max: number?): Array<T>
 		max = max or LIBRARY_DEFAULT_MAX
 
 		const array_type = MAP[of]
 		const array_bitmap_size = M_CEIL(max / 8)
+        const array_bitmap_size_scaled = M_CEIL(array_bitmap_size / 4) * 4
         local new: Array<T>
 
         if of == STYPE_BOOLEAN then
@@ -201,19 +222,19 @@ const library: Library = table.freeze {
                 ARRAY_STATIC_PART_ENDS_AT +
                 LIBRARY_OFFSET_AFTER_HEADER +
                 LIBRARY_OFFSET_BITMAP + 
-                array_bitmap_size            
+                array_bitmap_size_scaled            
             )
         else
             new = buffer.create(
                 ARRAY_STATIC_PART_ENDS_AT +
                 LIBRARY_OFFSET_AFTER_HEADER + 
                 LIBRARY_OFFSET_BITMAP + 
-                array_bitmap_size + 
+                array_bitmap_size_scaled + 
                 MAP[array_type] * max
             )
         end
 
-        WRITE_UINTEGER(new, ARRAY_OFFSET, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP + array_bitmap_size + LIBRARY_OFFSET_AFTER_HEADER + LIBRARY_OFFSET_BITMAP)
+        WRITE_UINTEGER(new, ARRAY_OFFSET, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP + array_bitmap_size_scaled + LIBRARY_OFFSET_AFTER_HEADER + LIBRARY_OFFSET_BITMAP)
 		WRITE_INTEGER(new, ARRAY_MAX, max)
 	    WRITE_INTEGER(new, ARRAY_COUNT, 0)
 		WRITE_CHAR(new, ARRAY_TYPE, array_type)
@@ -226,20 +247,19 @@ const library: Library = table.freeze {
 
         const index = pos - LIBRARY_INDEX_STARTS_AT
         const T = READ_CHAR(of, ARRAY_TYPE)
-        const bit_get = BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
 
         if T == TYPE_BOOLEAN then
-            return bit_get
-        elseif not bit_get then
-            if BM_GET(of, SETTINGS_SPOOF, ARRAY_SETTINGS) then
-                const bit_index = BM_FIND(of, 0, READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
+            return BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
+        end
 
+        if not BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP) then
+            if BM_GET(of, SETTINGS_SPOOF, ARRAY_SETTINGS) then
+                const bit_index = BM_FIND(of, 0, READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP, false)
                 if bit_index then
                     return self.read(of, bit_index + LIBRARY_INDEX_STARTS_AT)
-                else
-                    return nil
                 end
             end
+            return nil
         end
 
         const label = index * MAP[T]
@@ -286,19 +306,11 @@ const library: Library = table.freeze {
 
         const index = pos - LIBRARY_INDEX_STARTS_AT
         const T = READ_CHAR(of, ARRAY_TYPE)
-        
-        if value == nil then
-            if BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP) then
-                WRITE_INTEGER(of, ARRAY_COUNT, READ_INTEGER(of, ARRAY_COUNT) - 1)
-            end
 
-            BM_CLEAR(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
-        else
-            if not BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP) then
-                WRITE_INTEGER(of, ARRAY_COUNT, READ_INTEGER(of, ARRAY_COUNT) + 1)
-            end
-
+        if value then
             BM_SET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
+        else
+            BM_CLEAR(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP)
         end
 
         if T == TYPE_BOOLEAN then return end
@@ -411,12 +423,64 @@ const library: Library = table.freeze {
 
     iter = function<T>(of: Array<T>, previous: number?, inverted: boolean?): () -> (number?, T)
         local post = previous
+        
+        local cached_T = READ_CHAR(of, ARRAY_TYPE)
+        local cached_offset = READ_UINTEGER(of, ARRAY_OFFSET)
+        local cached_type_size = MAP[cached_T]
+        local bitmap_offset = ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP
+        local max_index = READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT
 
         return function()
-            const position, value = self.next(of, post, inverted)
+            local from: number
+            local to: number
 
-            if position == nil then
+            if post == nil then
+                from = 0
+                to = max_index
+            else
+                local prev_idx = post - LIBRARY_INDEX_STARTS_AT
+                if inverted then
+                    from = 0
+                    to = prev_idx - 1
+                else
+                    from = prev_idx + 1
+                    to = max_index
+                end
+            end
+
+            if from < 0 or from > max_index or to < 0 or to > max_index or from > to then
                 return nil, nil
+            end
+
+            const index = BM_FIND(of, from, to, bitmap_offset, inverted)
+            if not index then return nil, nil end
+
+            const position = index + LIBRARY_INDEX_STARTS_AT
+            const sector = cached_offset + index * cached_type_size
+            local value: T?
+            
+            if cached_T == TYPE_INTEGER then value = READ_INTEGER(of, sector) :: any
+            elseif cached_T == TYPE_FLOAT then value = READ_FLOAT(of, sector) :: any
+            elseif cached_T == TYPE_DOUBLE then value = READ_DOUBLE(of, sector) :: any
+            elseif cached_T == TYPE_SHORT then value = READ_SHORT(of, sector) :: any
+            elseif cached_T == TYPE_NORMAL then 
+                local p = READ_NORMAL(of, sector)
+                local u = B32_BAND(p, 0xFFFF)
+                local v = B32_RSHIFT(p, 16)
+                local x = u / 65535 * 2 - 1
+                local y = v / 65535 * 2 - 1
+                local z = 1 - M_ABSOLUTE(x) - M_ABSOLUTE(y)
+                if z < 0 then
+                    local old_x, old_y = x, y
+                    x = (1 - M_ABSOLUTE(old_y)) * (old_x >= 0 and 1 or -1)
+                    y = (1 - M_ABSOLUTE(old_x)) * (old_y >= 0 and 1 or -1)
+                end
+                value = vector.create(x, y, z) :: any
+            elseif cached_T == TYPE_VECTOR then
+                local slot_size = STATIC_SIZE_SLOT_VECTOR / 3
+                value = vector.create(READ_VECTOR(of, sector), READ_VECTOR(of, sector + slot_size), READ_VECTOR(of, sector + slot_size * 2)) :: any
+            elseif cached_T == TYPE_BOOLEAN then
+                value = BM_GET(of, index, bitmap_offset) :: any
             end
 
             post = position
@@ -428,13 +492,33 @@ const library: Library = table.freeze {
         return assert(MAP[tostring(READ_CHAR(of, ARRAY_TYPE))], "cannot read type, array damaged") :: any
 	end,
 
+	count = function<T>(of: Array<T>): number
+        local total_count = 0
+
+        const array_bitmap_offset = ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP
+        const u32_count = B32_RSHIFT(READ_INTEGER(of, ARRAY_MAX) + 31, 5)
+
+        for i = 0, u32_count - 1 do
+            const val = READ_UINTEGER(of, array_bitmap_offset + i * 4)
+            total_count += POPCOUNT_16[bit32.band(val, 0xFFFF) + 1] + POPCOUNT_16[bit32.rshift(val, 16) + 1]
+        end
+
+        BM_CLEAR(of, SETTINGS_CHANGED, ARRAY_SETTINGS)
+        WRITE_INTEGER(of, ARRAY_COUNT, total_count)
+        return total_count
+    end,
+
     max = function<T>(of: Array<T>): number return READ_INTEGER(of, ARRAY_MAX) end,
-	count = function<T>(of: Array<T>): number return READ_INTEGER(of, ARRAY_COUNT) end,
 	size = function<T>(of: Array<T>, slot: boolean?): number return slot and MAP[MAP[READ_CHAR(of, ARRAY_TYPE)]] or buffer.len(of) end,
 	set = function<T>(of: Array<T>, setting: array_settings, to: boolean): () assert(not self.get(of, "freeze"), "cannot modify frozen array"); if to then BM_SET(of, assert(MAP[setting], `unknown {setting}`), ARRAY_SETTINGS) else BM_CLEAR(of, assert(MAP[setting], `unknown {setting}`), ARRAY_SETTINGS) end end,
     get = function<T>(of: Array<T>, setting: array_settings): boolean return BM_GET(of, assert(MAP[setting], `unknown setting {setting}`), ARRAY_SETTINGS) end,
     dsize = function<T>(of: Array<T>): number return M_CEIL(READ_INTEGER(of, ARRAY_MAX) / 8) + LIBRARY_OFFSET_AFTER_HEADER + LIBRARY_OFFSET_BITMAP end
 }
 
+if DEBUG then
+    print "For buffered arrays (ifmnb/array-buffer), the DEBUG mod is always active in rbx studio with increased protection against incorrect actions with arrays. \n\nThese checks are disabled in the production code. (!)"
+end
+
+table.freeze(library)
 self = library
 return library
