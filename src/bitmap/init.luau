@@ -18,12 +18,12 @@ const BYTE_BITS = 8
 const BYTE_MASK = 0xFF
 
 const M_MIN = math.min
-const M_FLOOR = math.floor
 
 const B32_BAND = bit32.band
 const B32_BOR = bit32.bor
 const B32_BNOT = bit32.bnot
 const B32_LSHIFT = bit32.lshift
+const B32_RSHIFT = bit32.rshift
 const B32_BXOR = bit32.bxor
 const B32_COUNTRZ = bit32.countrz
 const B32_COUNTLZ = bit32.countlz
@@ -48,28 +48,28 @@ end
 
 const library: Library = table.freeze {
 	get = function(of: BitMap, index: number, offset: number?): boolean
-		return B32_BAND(READ_BYTE(of, M_FLOOR(index / BYTE_BITS) + (offset or 0)),  B32_LSHIFT(1, index % BYTE_BITS)) ~= 0
+		return B32_BAND(READ_BYTE(of, B32_RSHIFT(index, 3) + (offset or 0)),  B32_LSHIFT(1, B32_BAND(index, 7))) ~= 0
 	end,
 
 	set = function(of: BitMap, index: number, offset: number?): ()
-		const byte = M_FLOOR(index / BYTE_BITS) + (offset or 0)
+		const byte = B32_RSHIFT(index, 3) + (offset or 0)
 		const value = READ_BYTE(of, byte)
 
-		WRITE_BYTE(of, byte, B32_BOR(value, B32_LSHIFT(1, index % BYTE_BITS)))
+    	WRITE_BYTE(of, byte, B32_BOR(value, B32_LSHIFT(1, B32_BAND(index, 7))))
 	end,
 
 	toggle = function(of: BitMap, index: number, offset: number?): ()
-		const byte = M_FLOOR(index / BYTE_BITS) + (offset or 0)
+		const byte = B32_RSHIFT(index, 3) + (offset or 0)
 		const value = READ_BYTE(of, byte)
 
-		WRITE_BYTE(of, byte, B32_BXOR(value,  B32_LSHIFT(1, index % BYTE_BITS)))
+    	WRITE_BYTE(of, byte, B32_BXOR(value, B32_LSHIFT(1, B32_BAND(index, 7))))
 	end,
 
 	clear = function(of: BitMap, index: number, offset: number?): ()
-		const byte = M_FLOOR(index / BYTE_BITS) + (offset or 0)
+		const byte = B32_RSHIFT(index, 3) + (offset or 0)
 		const value = READ_BYTE(of, byte)
 
-		WRITE_BYTE(of, byte, B32_BAND(value, B32_BNOT( B32_LSHIFT(1, index % BYTE_BITS))))
+		WRITE_BYTE(of, byte, B32_BAND(value, B32_BNOT( B32_LSHIFT(1, B32_BAND(index, 7)))))
 	end,
 
 	find = function(of: BitMap, from: number?, to: number?, offset: number?, inverse: boolean?): number?
@@ -83,16 +83,16 @@ const library: Library = table.freeze {
 			return nil
 		end
 
-		const first_byte = M_FLOOR(first / BYTE_BITS)
-		const last_byte = M_FLOOR(last / BYTE_BITS)
+		const first_byte = B32_RSHIFT(first, 3)
+		const last_byte = B32_RSHIFT(last, 3)
 
 		if not inverse then
 			for byte = first_byte, last_byte do
 				const value = B32_BAND(
 					READ_BYTE(of, byte + offset),
 					range_mask(
-						if byte == first_byte then first % BYTE_BITS else 0,
-						if byte == last_byte then last % BYTE_BITS else 7
+						if byte == first_byte then B32_BAND(first, 7) else 0,
+						if byte == last_byte then B32_BAND(last, 7) else 7
 					)
 				)
 
@@ -105,8 +105,8 @@ const library: Library = table.freeze {
 				const value = B32_BAND(
 					READ_BYTE(of, byte + offset),
 					range_mask(
-						if byte == first_byte then first % BYTE_BITS else 0,
-						if byte == last_byte then last % BYTE_BITS else 7
+						if byte == first_byte then B32_BAND(first, 7) else 0,
+						if byte == last_byte then B32_BAND(last, 7) else 7
 					)
 				)
 
@@ -131,14 +131,14 @@ const library: Library = table.freeze {
 			return nil
 		end
 
-        const first_byte = M_FLOOR(first / BYTE_BITS)
-        const last_byte = M_FLOOR(last / BYTE_BITS)
+		const first_byte = B32_RSHIFT(first, 3)
+		const last_byte = B32_RSHIFT(last, 3)
 
 		if not inverse then
 			for byte = first_byte, last_byte do
 				const value = READ_BYTE(of, byte + offset)
-				const low = if byte == first_byte then first % BYTE_BITS else 0
-				const high = if byte == last_byte then last % BYTE_BITS else 7
+				const low = if byte == first_byte then B32_BAND(first, 7) else 0
+				const high = if byte == last_byte then B32_BAND(last, 7) else 7
 				const mask = range_mask(low, high)
 				const free = B32_BAND(B32_BNOT(value), mask)
 
@@ -150,8 +150,8 @@ const library: Library = table.freeze {
 			for byte = last_byte, first_byte, -1 do
 				const value = READ_BYTE(of, byte + offset)
 
-				const low = if byte == first_byte then first % BYTE_BITS else 0
-				const high = if byte == last_byte then last % BYTE_BITS else 7
+				const low = if byte == first_byte then B32_BAND(first, 7) else 0
+				const high = if byte == last_byte then B32_BAND(last, 7) else 7
 
 				const mask = range_mask(low, high)
 				const free = B32_BAND(B32_BNOT(value), mask)
