@@ -1,20 +1,20 @@
 ## PLANNED
 
 Stack-buffer (LIFO)
-    -- Извлечение только с конца
+-- Extraction only from the end
 
 Queue-buffer (FIFO)
-    -- Извлечение только с начала
+-- Extraction only from the beginning
 
 ## CHANGE
 
 ### Array-buffer
 
--- Позволить пользователям переопределять стандартный размер слота
-    --> Разрешить пользователям создавать buffer/string arrays
-        | Стандартный размер 64 байта на 1 слот
+-- Allow users to override the default slot size
+--> Allow users to create buffer/string arrays
+| Default size: 64 bytes per slot
 
--- Добавить функционал:
+-- Add the following functionality:
 
 ```luau
     
@@ -23,9 +23,9 @@ Queue-buffer (FIFO)
         read insert: <T>(of: Array<T>, value: T, pos: number?) -> number, -- pos
         read remove: <T>(of: Array<T>, pos: number?) -> boolean,
         read find: <T>(of: Array<T>, value: T?) -> number, -- pos
-        read expand: <T>(of: Array<T>, new_max: number) -> Array<T>, -- новый array заполнен теми же значениями, но расширен размер
+        read expand: <T>(of: Array<T>, new_max: number) -> Array<T>, -- new array filled with the same values, but with an increased size
     }
 ```
 
--- Добавить настройку `SETTINGS_CONVERT`
-    | `array.read()` сможет возвращать raw информацию без конвертации в `array.type()` значение
+-- Add `SETTINGS_CONVERT` setting
+| `array.read()` will be able to return raw information without converting it to an `array.type()` value
