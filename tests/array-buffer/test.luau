@@ -1,3 +1,4 @@
+--!strict
 -- insert that test in folder where placed array
 
 -- latest test on my notepad
@@ -117,7 +118,7 @@ print("buffer array total:", os.clock() - t0)
 print("\n=== TABLE (DENSE) ===")
 
 local t5 = os.clock()
-local t = table.create(MAX)
+local t = table.create(MAX, 0)
 print(os.clock() - t5, "time to create table")
 
 local t6 = os.clock()
