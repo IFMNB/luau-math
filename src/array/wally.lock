@@ -4,7 +4,7 @@ registry = "test"
 
 [[package]]
 name = "ifmnb/array-buffer"
-version = "2609.2.0"
+version = "2609.3.0"
 dependencies = [["BitMap", "ifmnb/bitmap@2609.3.0"]]
 
 [[package]]

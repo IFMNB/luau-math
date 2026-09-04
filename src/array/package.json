@@ -1,6 +1,6 @@
 {
 	"name": "ifmnb/buffer-array",
-	"version": "2609.3.0",
+	"version": "2609.4.0",
 	"main": "init.luau",
 	"repository": "github:IFMNB/luau-math",
 	"license": "GNU General Public License v3.0",
