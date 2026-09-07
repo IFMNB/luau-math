@@ -1,12 +1,11 @@
---!strict
 --!native
 --!optimize 2
 
-const BitMap = require("@self/Packages/BitMap")
+const BitMap = require("./BitMap")
 
 export type supported = number | nil | boolean | string | vector | Array
 export type supported_types = "integer" | "boolean" | "vector" | "float" | "number" | "normal" | "short"
-export type array_settings = "freeze" | "spoof"
+export type array_settings = "freeze" | "spoof" | "convert"
 
 type Byte = number
 type Index = number
@@ -19,13 +18,13 @@ export type Array<unknown = supported> = buffer
 export type Library = {
     read create:  (of: supported_types, max: number?) -> Array,
 
-	read read: <T...>(of: Array, pos: number?) -> ...supported?,
+	read read: <T...>(of: Array, pos: number?) -> T...?,
 	read write: (of: Array, pos: number?, value: supported?) -> (),
 
 	read put: (of: Array, value: supported, inverse: boolean?) -> number,
-	read pick: (of: Array, inverse: boolean?) -> ...supported?,
-	read next: (of: Array, pos: number?, inverted: boolean?) -> (number?, supported),
-    read iter: (of: Array, previous: number?, inverted: boolean?) -> () -> (number?, supported),
+	read pick: <T...>(of: Array, inverse: boolean?) -> T...?,
+	read next: <T> (of: Array, pos: number?, inverted: boolean?) -> (number?, T),
+    read iter: <T> (of: Array, previous: number?, inverted: boolean?) -> () -> (number?, T),
 
 	read type: (of: Array) -> supported_types,
 	read max: (of: Array) -> number,
@@ -34,6 +33,7 @@ export type Library = {
 	read set: (of: Array, setting: array_settings, to: boolean) -> (),
     read get: (of: Array, setting: array_settings) -> boolean,
     read dsize: (of: Array) -> number,
+    read exist: (of: Array, pos: number?) -> boolean
 }
 
 const RBX: any = game
@@ -81,9 +81,9 @@ const BM_FIND_FREE = BitMap.find_free
 
 const ARRAY_SETTINGS: Index = 0
 const SETTINGS_FREEZE: Index = 0
-const SETTINGS_NULLIFE: Index = 1
+const SETTINGS_NULLIFE: Index = 1 -- unused
 const SETTINGS_SPOOF: Index = 2
-const SETTINGS_CHANGED: Index = 3
+const SETTINGS_CHANGED: Index = 3 -- unused
 const SETTINGS_CONVERT: Index = 4
 
 const ARRAY_TYPE: Index = 1 -- u8
@@ -210,7 +210,7 @@ const library: Library = {
 		return new
 	end,
 
-	read = function(of: Array, pos: number?): ...supported?
+	read = function <T...>(of: Array, pos: number?): T...
         pos = pos or LIBRARY_INDEX_STARTS_AT
 
         const index = pos - LIBRARY_INDEX_STARTS_AT
@@ -351,7 +351,7 @@ const library: Library = {
         return
 	end,
 
-	pick = function(of: Array, inverse: boolean?): supported?
+	pick = function <T...> (of: Array, inverse: boolean?): T...
 		const index = BM_FIND(of, 0, READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP, inverse)
 		return index and self.read(of, index + LIBRARY_INDEX_STARTS_AT) or nil
 	end,
@@ -363,7 +363,7 @@ const library: Library = {
         return position
 	end,
 
-	next = function(of: Array, previous: number?, inverted: boolean?): (number?, supported)
+	next = function <T...> (of: Array, previous: number?, inverted: boolean?): (number?, T...)
         const max = READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT
 
         local from: number
@@ -404,7 +404,7 @@ const library: Library = {
         return position, self.read(of, position)
 	end,
 
-    iter = function(of: Array, previous: number?, inverted: boolean?): () -> (number?, supported)
+    iter = function <T...> (of: Array, previous: number?, inverted: boolean?): () -> (number?, T...)
         local post = previous
         
         local cached_T = READ_CHAR(of, ARRAY_TYPE)
@@ -516,6 +516,38 @@ const library: Library = {
 
     dsize = function(of: Array): number
         return M_CEIL(READ_INTEGER(of, ARRAY_MAX) / 8) + LIBRARY_OFFSET_AFTER_HEADER + LIBRARY_OFFSET_BITMAP
+    end,
+
+    exist = function (of: Array, pos: number?) : boolean
+        pos = pos or LIBRARY_INDEX_STARTS_AT
+
+        const index = pos - LIBRARY_INDEX_STARTS_AT
+        const unknown = READ_CHAR(of, ARRAY_TYPE)
+
+        if unknown == TYPE_BOOLEAN then
+            if BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP) then 
+                return true
+            else
+                return false
+            end
+        end
+
+        if not BM_GET(of, index, ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP) then
+            if BM_GET(of, SETTINGS_SPOOF, ARRAY_SETTINGS) then
+                const bit_index = BM_FIND(
+                    of,
+                    0,
+                    READ_INTEGER(of, ARRAY_MAX) - LIBRARY_INDEX_STARTS_AT,
+                    ARRAY_BITMAP + LIBRARY_OFFSET_BITMAP,
+                    false
+                )
+                if bit_index then
+                    return self.exist(of, bit_index + LIBRARY_INDEX_STARTS_AT)
+                end
+            end
+        end
+
+        return false
     end
 }
 
