@@ -1,7 +1,7 @@
 --!native
 --!optimize 2
 
-const BitMap = require("../BitMap")
+const BitMap = require("@self/import/buffer-bitmap")
 
 export type supported = number | nil | boolean | string | vector | Array
 export type supported_types = "integer" | "boolean" | "vector" | "float" | "number" | "normal" | "short"

@@ -25,7 +25,7 @@
 
   "workspace": [],
   "scripts": {},
-  "tools": {},
+  "tools": { "rojo": "rojo-rbx/rojo@7.7.1" },
   "package_scripts": { "block": false, "allow": [] },
 
   "monorepository-elements": {},

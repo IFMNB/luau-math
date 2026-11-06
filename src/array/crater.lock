@@ -1,0 +1,16 @@
+{
+  "lock_version": 1,
+  "manifest_hash": "35e0d5a5b592ef7484c8faeb3ef6d0f1af17e384b31111b17b0ce9aa398d4fa9",
+  "packages": [],
+  "vendor": [
+    {
+      "realm": "client",
+      "name": "ifmnb/buffer-bitmap",
+      "version": "0.0.1",
+      "direct": true,
+      "registry": "https://raw.githubusercontent.com/TheExeDEV/crater-registry/main",
+      "sha256": "5408c348a34eb1b43cb79704c9065a4e122be113c2ca565de300a3b2a3f5bc95",
+      "dependencies": []
+    }
+  ]
+}

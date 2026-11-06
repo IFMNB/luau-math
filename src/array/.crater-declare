@@ -98,7 +98,7 @@
       "server",
       "develop"
     ],
-    "folder": "_vendor",
+    "folder": "",
     "lock_section": "vendor",
     "artifact_path": "<vendor folder of the realm>/<alias>, the same path as in development",
     "package_root": "package_root",
@@ -110,8 +110,8 @@
     },
     "folders": {
       "client": {
-        "path": "_vendor/client",
-        "alias": "client"
+        "path": "import",
+        "alias": "import"
       },
       "server": {
         "path": "_vendor/server",

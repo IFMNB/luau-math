@@ -15,7 +15,7 @@
 
   "vendor": {
     "client": {
-      "path": "./"
+      "path": "import"
     }
   },
   
