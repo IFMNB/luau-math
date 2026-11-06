@@ -1,7 +1,7 @@
 --!native
 --!optimize 2
 
-const BitMap = require("./BitMap")
+const BitMap = require("../BitMap")
 
 export type supported = number | nil | boolean | string | vector | Array
 export type supported_types = "integer" | "boolean" | "vector" | "float" | "number" | "normal" | "short"
@@ -18,11 +18,11 @@ export type Array<unknown = supported> = buffer
 export type Library = {
     read create:  (of: supported_types, max: number?) -> Array,
 
-	read read: <T...>(of: Array, pos: number?) -> T...?,
+	read read: <T...>(of: Array, pos: number?) -> T...,
 	read write: (of: Array, pos: number?, value: supported?) -> (),
 
 	read put: (of: Array, value: supported, inverse: boolean?) -> number,
-	read pick: <T...>(of: Array, inverse: boolean?) -> T...?,
+	read pick: <T...>(of: Array, inverse: boolean?) -> T...,
 	read next: <T> (of: Array, pos: number?, inverted: boolean?) -> (number?, T),
     read iter: <T> (of: Array, previous: number?, inverted: boolean?) -> () -> (number?, T),
 
@@ -36,6 +36,7 @@ export type Library = {
     read exist: (of: Array, pos: number?) -> boolean
 }
 
+game = game :: any
 const RBX: any = game
 const RBXR: any = RBX and RBX:GetService("RunService")
 const DEBUG: boolean = RBXR and RBXR:IsStudio() or false
